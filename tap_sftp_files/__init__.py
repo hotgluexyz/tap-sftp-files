@@ -57,7 +57,7 @@ def download(args):
     }
 
     if port:
-        connection_config['port'] = port
+        connection_config['port'] = int(port)
 
     # Establish connection to SFTP server
     with pysftp.Connection(host, **connection_config) as sftp:
