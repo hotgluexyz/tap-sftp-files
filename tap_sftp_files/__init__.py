@@ -60,18 +60,18 @@ def download(args):
     if port:
         connection_config['port'] = int(port)
 
-    if remote_path:
-        # Establish connection to SFTP server
-        with pysftp.Connection(host, **connection_config) as sftp:
-            logger.info(f"Downloading: data from {remote_path} -> {target_dir}")
-            # Copy all files in remote_path to target_dir
-            sftp.get_d(remote_path, target_dir)
-    elif remote_files:
+    if remote_files:
         with pysftp.Connection(host, **connection_config) as sftp:
             for file in remote_files:
                 target = f"{target_dir}/{file.split('/')[-1]}"
                 logger.info(f"Downloading: data from {file} -> {target}")
                 sftp.get(file, target)
+    elif remote_path:
+        # Establish connection to SFTP server
+        with pysftp.Connection(host, **connection_config) as sftp:
+            logger.info(f"Downloading: data from {remote_path} -> {target_dir}")
+            # Copy all files in remote_path to target_dir
+            sftp.get_d(remote_path, target_dir)
     else:
         raise Exception("One of the parameters path_prefix or files must be defined.")
 
