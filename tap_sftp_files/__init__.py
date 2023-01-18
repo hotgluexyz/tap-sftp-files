@@ -71,7 +71,7 @@ def download(args):
         with pysftp.Connection(host, **connection_config) as sftp:
             logger.info(f"Downloading: data from {remote_path} -> {target_dir}")
             # Copy all files in remote_path to target_dir
-            sftp.get_d(remote_path, target_dir)
+            sftp.get_r(remote_path, target_dir)
     else:
         raise Exception("One of the parameters path_prefix or files must be defined.")
 
