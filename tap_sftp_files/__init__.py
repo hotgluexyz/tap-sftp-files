@@ -6,6 +6,8 @@ import logging
 
 from pathlib import Path
 import pysftp
+from io import StringIO
+import paramiko
 
 logger = logging.getLogger("tap-sftp-files")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -54,8 +56,13 @@ def download(args):
 
     connection_config = {
         'username': config['username'],
-        'password': config['password']
     }
+
+    if config.get('password'):
+        connection_config['password'] = config['password']
+    elif config.get("private_key"):
+        key_string = StringIO(config.get("private_key"))
+        connection_config['private_key'] = paramiko.RSAKey.from_private_key(key_string)
 
     if port:
         connection_config['port'] = int(port)
