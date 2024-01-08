@@ -61,8 +61,11 @@ def download(args):
     if config.get('password'):
         connection_config['password'] = config['password']
     elif config.get("private_key"):
-        key_string = StringIO(config.get("private_key"))
-        connection_config['private_key'] = paramiko.RSAKey.from_private_key(key_string)
+        private_key_path = f"{os.getcwd()}/key.pem"
+        with open(private_key_path, "w") as f:
+            f.write(config.get("private_key"))
+
+        connection_config['private_key'] = private_key_path
 
     if port:
         connection_config['port'] = int(port)
