@@ -16,6 +16,50 @@ def load_json(path):
     with open(path) as f:
         return json.load(f)
 
+def get_files_to_download(sftp, remote_dir, search_patterns, exact_directory=False):
+    files_to_download = []
+    with sftp.cd(remote_dir):
+        for item in sftp.listdir_attr():
+            remote_path = os.path.join(remote_dir, item.filename)
+            match_found = False
+
+            for pattern in search_patterns:
+                if item.filename.startswith(pattern):
+                    if not exact_directory or (exact_directory and sftp.isfile(item.filename)):
+                        files_to_download.append(item.filename)
+                        match_found = True  # Set flag to True if match is found
+            
+            # If no match is found and exact_directory is True, check if it's a directory and add it
+            if match_found and sftp.isfile(item.filename):
+                files_to_download.append(item.filename)
+
+    if files_to_download:            
+        logger.info(f"Found following directories to download {files_to_download}")
+    return files_to_download
+
+def download_files(sftp, remote_dir, local_dir, files_to_download):
+    # Download the selected files
+    if len(files_to_download)>0:
+        for file in files_to_download:
+            # Create local directory if it doesn't exist
+            if not os.path.exists(local_dir):
+                os.makedirs(local_dir)
+            remote_path = os.path.join(remote_dir, file)
+            local_path = os.path.join(local_dir, file)
+            logger.info(f"Downloading file {remote_path}: {local_path}")
+            sftp.get(remote_path, local_path)
+
+def recursive_download(sftp, remote_dir, local_dir, search_patterns, exact_directory=False):
+    files_to_download = get_files_to_download(sftp, remote_dir, search_patterns, exact_directory)
+    download_files(sftp, remote_dir, local_dir, files_to_download)
+    if not exact_directory:
+        directories_to_download = [filename for filename in sftp.listdir(remote_dir) if not sftp.isfile(os.path.join(remote_dir, filename))]
+    for directory in directories_to_download:
+        remote_path = os.path.join(remote_dir, directory)
+        local_path = os.path.join(local_dir, directory)
+        logger.info(f"Recursive search for files in {remote_path}")
+        recursive_download(sftp, remote_path, local_path, search_patterns, exact_directory)
+
 
 def parse_args():
     '''Parse standard command-line args.
@@ -69,8 +113,11 @@ def download(args):
 
     if port:
         connection_config['port'] = int(port)
+    if config.get("tables"):
+        with pysftp.Connection(host, **connection_config) as sftp:
+            recursive_download(sftp, remote_path, target_dir, config.get("tables"), exact_directory=config.get("exact_directory",False))
 
-    if remote_files:
+    elif remote_files:
         with pysftp.Connection(host, **connection_config) as sftp:
             for file in remote_files:
                 target = f"{target_dir}/{file.split('/')[-1]}"
@@ -86,7 +133,6 @@ def download(args):
         raise Exception("One of the parameters path_prefix or files must be defined.")
 
     logger.info(f"Data downloaded.")
-
 
 def main():
     # Parse command line arguments
