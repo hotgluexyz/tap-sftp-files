@@ -54,11 +54,11 @@ def recursive_download(sftp, remote_dir, local_dir, search_patterns, exact_direc
     download_files(sftp, remote_dir, local_dir, files_to_download)
     if not exact_directory:
         directories_to_download = [filename for filename in sftp.listdir(remote_dir) if not sftp.isfile(os.path.join(remote_dir, filename))]
-    for directory in directories_to_download:
-        remote_path = os.path.join(remote_dir, directory)
-        local_path = os.path.join(local_dir, directory)
-        logger.info(f"Recursive search for files in {remote_path}")
-        recursive_download(sftp, remote_path, local_path, search_patterns, exact_directory)
+        for directory in directories_to_download:
+            remote_path = os.path.join(remote_dir, directory)
+            local_path = os.path.join(local_dir, directory)
+            logger.info(f"Recursive search for files in {remote_path}")
+            recursive_download(sftp, remote_path, local_path, search_patterns, exact_directory)
 
 
 def parse_args():
