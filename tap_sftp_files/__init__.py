@@ -80,7 +80,11 @@ def download(args):
         # Establish connection to SFTP server
         with pysftp.Connection(host, **connection_config) as sftp:
             logger.info(f"Downloading: data from {remote_path} -> {target_dir}")
-            if config.get("exact_directory", False):
+            if config.get("recursive_clone", False):
+                with sftp.cd(remote_path):
+                    # Copy all files in remote_path to target_dir
+                    sftp.get_r(".", target_dir)
+            elif config.get("exact_directory", False):
                 sftp.get_d(remote_path, target_dir)
             else:
                 # Copy all files in remote_path to target_dir
