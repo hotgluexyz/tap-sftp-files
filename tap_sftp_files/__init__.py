@@ -8,6 +8,7 @@ from pathlib import Path
 import pysftp
 from io import StringIO
 import paramiko
+import hashlib
 
 logger = logging.getLogger("tap-sftp-files")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -37,12 +38,30 @@ def parse_args():
         help='Config file',
         required=True)
 
+    parser.add_argument(
+        '-s', '--state',
+        help='State file',
+        required=False)
+
     args = parser.parse_args()
     if args.config:
         setattr(args, 'config_path', args.config)
         args.config = load_json(args.config)
 
+    if args.state:
+        setattr(args, 'state_path', args.state)
+        args.state = load_json(args.state)
+
     return args
+
+
+def calculate_md5(file_path):
+    """Calculate the MD5 hash of a file."""
+    hash_md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
 
 
 def download(args):
@@ -91,6 +110,26 @@ def download(args):
                 sftp.get_r(remote_path, target_dir)
     else:
         raise Exception("One of the parameters path_prefix or files must be defined.")
+
+    if config.get('incremental_mode'):
+        state = args.state or dict()
+
+        # Need to walk the entire target_dir and create the md5
+        logger.info(target_dir)
+        for root, dirs, files in os.walk(target_dir):
+            for file in files:
+                local_file_path = os.path.join(root, file)
+                remote_file_path = local_file_path.replace(target_dir, remote_path, 1)
+                file_hash = calculate_md5(local_file_path)
+
+                # NOTE: We need to delete this file, it's already been synced
+                if file_hash == state.get(remote_file_path):
+                    os.remove(local_file_path)
+
+                state[remote_file_path] = file_hash
+
+        # Write the updated state
+        json.dump(state, open(args.state_path, "w"), indent=4)
 
     logger.info(f"Data downloaded.")
 
