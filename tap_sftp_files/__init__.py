@@ -14,6 +14,9 @@ logger = logging.getLogger("tap-sftp-files")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
 def load_json(path):
+    if not os.path.exists(path):
+        return dict()
+
     with open(path) as f:
         return json.load(f)
 
