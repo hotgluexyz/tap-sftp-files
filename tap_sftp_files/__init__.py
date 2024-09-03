@@ -72,10 +72,10 @@ def sftp_remove(sftp_conn, delete_after_sync=False, remote_file=None, remote_pat
         return
 
     try:
-        if not remote_file:
+        if remote_file:
             logger.info(f"Removing: remote file {remote_file}")
             sftp_conn.remove(remote_file)
-        elif not remote_path:
+        elif remote_path:
             logger.info(f"Removing: remote path {remote_path}")
             sftp_conn.rmdir(remote_path)
     except:
