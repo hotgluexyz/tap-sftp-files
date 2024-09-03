@@ -67,6 +67,21 @@ def calculate_md5(file_path):
     return hash_md5.hexdigest()
 
 
+def sftp_remove(sftp_conn, delete_after_sync=False, remote_file=None, remote_path=None):
+    if not delete_after_sync:
+        return
+
+    try:
+        if not remote_file:
+            logger.info(f"Removing: remote file {remote_file}")
+            sftp_conn.remove(remote_file)
+        elif not remote_path:
+            logger.info(f"Removing: remote path {remote_path}")
+            sftp_conn.rmdir(remote_path)
+    except:
+        logger.exception("Error removing files")
+
+
 def download(args):
     logger.debug(f"Downloading data...")
     config = args.config
@@ -75,6 +90,7 @@ def download(args):
     remote_path = config.get('path_prefix')
     remote_files = config.get('files')
     target_dir = config['target_dir']
+    delete_after_sync = config.get('delete_after_sync', False)
 
     connection_config = {
         'username': config['username'],
@@ -98,6 +114,7 @@ def download(args):
                 target = f"{target_dir}/{file.split('/')[-1]}"
                 logger.info(f"Downloading: data from {file} -> {target}")
                 sftp.get(file, target)
+                sftp_remove(sftp, delete_after_sync, remote_file=file)
     elif remote_path:
         # Establish connection to SFTP server
         with pysftp.Connection(host, **connection_config) as sftp:
@@ -106,11 +123,14 @@ def download(args):
                 with sftp.cd(remote_path):
                     # Copy all files in remote_path to target_dir
                     sftp.get_r(".", target_dir)
+                sftp_remove(sftp, delete_after_sync, remote_path=remote_path)
             elif config.get("exact_directory", False):
                 sftp.get_d(remote_path, target_dir)
+                sftp_remove(sftp, delete_after_sync, remote_path=remote_path)
             else:
                 # Copy all files in remote_path to target_dir
                 sftp.get_r(remote_path, target_dir)
+                sftp_remove(sftp, delete_after_sync, remote_path=remote_path)
     else:
         raise Exception("One of the parameters path_prefix or files must be defined.")
 
