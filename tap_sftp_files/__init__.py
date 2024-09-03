@@ -9,6 +9,7 @@ import pysftp
 from io import StringIO
 import paramiko
 import hashlib
+from stat import S_ISDIR
 
 logger = logging.getLogger("tap-sftp-files")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -67,6 +68,20 @@ def calculate_md5(file_path):
     return hash_md5.hexdigest()
 
 
+def rm(sftp_conn, remote_path):
+    files = sftp_conn.listdir(remote_path)
+
+    for f in files:
+        filepath = os.path.join(remote_path, f)
+
+        if sftp_conn.isdir(filepath):
+            rm(sftp_conn, filepath)
+        else:
+            sftp_conn.remove(filepath)
+
+    sftp_conn.rmdir(remote_path)
+
+
 def sftp_remove(sftp_conn, delete_after_sync=False, remote_file=None, remote_path=None):
     if not delete_after_sync:
         return
@@ -77,7 +92,7 @@ def sftp_remove(sftp_conn, delete_after_sync=False, remote_file=None, remote_pat
             sftp_conn.remove(remote_file)
         elif remote_path:
             logger.info(f"Removing: remote path {remote_path}")
-            sftp_conn.execute(f"rm -rf {remote_path}/*")
+            rm(sftp_conn, remote_path)
     except:
         logger.exception("Error removing files")
 
@@ -91,6 +106,7 @@ def download(args):
     remote_files = config.get('files')
     target_dir = config['target_dir']
     delete_after_sync = config.get('delete_after_sync', False)
+    incremental_mode = config.get('incremental_mode')
 
     connection_config = {
         'username': config['username'],
@@ -114,7 +130,8 @@ def download(args):
                 target = f"{target_dir}/{file.split('/')[-1]}"
                 logger.info(f"Downloading: data from {file} -> {target}")
                 sftp.get(file, target)
-                sftp_remove(sftp, delete_after_sync, remote_file=file)
+                if not incremental_mode:
+                    sftp_remove(sftp, delete_after_sync, remote_file=file)
     elif remote_path:
         # Establish connection to SFTP server
         with pysftp.Connection(host, **connection_config) as sftp:
@@ -123,18 +140,18 @@ def download(args):
                 with sftp.cd(remote_path):
                     # Copy all files in remote_path to target_dir
                     sftp.get_r(".", target_dir)
-                sftp_remove(sftp, delete_after_sync, remote_path=remote_path)
             elif config.get("exact_directory", False):
                 sftp.get_d(remote_path, target_dir)
-                sftp_remove(sftp, delete_after_sync, remote_path=remote_path)
             else:
                 # Copy all files in remote_path to target_dir
                 sftp.get_r(remote_path, target_dir)
+
+            if not incremental_mode:
                 sftp_remove(sftp, delete_after_sync, remote_path=remote_path)
     else:
         raise Exception("One of the parameters path_prefix or files must be defined.")
 
-    if config.get('incremental_mode'):
+    if incremental_mode:
         state = args.state or dict()
 
         # Need to walk the entire target_dir and create the md5
@@ -148,6 +165,10 @@ def download(args):
                 # NOTE: We need to delete this file, it's already been synced
                 if file_hash == state.get(remote_file_path):
                     os.remove(local_file_path)
+                else:
+                    # If it's not already been synced, delete from remote
+                    with pysftp.Connection(host, **connection_config) as sftp:
+                        sftp_remove(sftp, delete_after_sync, remote_file=remote_file_path)
 
                 state[remote_file_path] = file_hash
 
