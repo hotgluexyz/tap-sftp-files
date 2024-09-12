@@ -22,6 +22,23 @@ def load_json(path):
         return json.load(f)
 
 
+class LimitedFilesConnection(pysftp.Connection):
+    def __init__(self, host, username = None, private_key = None, password = None, port = 22, private_key_pass = None, ciphers = None, log = False, max_file_count = None) -> None:
+        self.max_file_count = max_file_count
+        self.current_file_count = 0
+        super().__init__(host, username=username, private_key=private_key, password=password, port=port, private_key_pass=private_key_pass, ciphers=ciphers, log=log)
+
+    def get(self, remotepath, localpath = None, callback = None, preserve_mtime = False) -> None:
+        if self.stop_get_files:
+            return
+        self.current_file_count += 1
+        return super().get(remotepath, localpath=localpath, callback=callback, preserve_mtime=preserve_mtime)
+    
+    @property
+    def stop_get_files(self):
+        return self.current_file_count < self.max_file_count
+
+
 def parse_args():
     '''Parse standard command-line args.
     Parses the command-line arguments mentioned in the SPEC and the
@@ -68,31 +85,39 @@ def calculate_md5(file_path):
     return hash_md5.hexdigest()
 
 
-def rm(sftp_conn, remote_path):
+def rm(sftp_conn, remote_path, removed_file_count=0, max_file_count=None):
     files = sftp_conn.listdir(remote_path)
 
     for f in files:
+        if (max_file_count and removed_file_count < max_file_count):
+            break
         filepath = os.path.join(remote_path, f)
 
         if sftp_conn.isdir(filepath):
-            rm(sftp_conn, filepath)
+            removed_file_count = rm(sftp_conn, filepath, removed_file_count, max_file_count)
         else:
             sftp_conn.remove(filepath)
+            removed_file_count += 1
+
+    return removed_file_count
 
 
-def sftp_remove(sftp_conn, delete_after_sync=False, remote_file=None, remote_path=None):
+def sftp_remove(sftp_conn, delete_after_sync=False, remote_file=None, remote_path=None, removed_file_count=0, max_file_count=None):
     if not delete_after_sync:
         return
 
     try:
-        if remote_file:
+        if remote_file and (max_file_count and removed_file_count < max_file_count):
             logger.info(f"Removing: remote file {remote_file}")
             sftp_conn.remove(remote_file)
+            removed_file_count += 1
         elif remote_path:
             logger.info(f"Removing: remote path {remote_path}")
-            rm(sftp_conn, remote_path)
+            removed_file_count = rm(sftp_conn, remote_path, removed_file_count, max_file_count)
     except:
         logger.exception("Error removing files")
+
+    return removed_file_count
 
 
 def download(args):
@@ -105,10 +130,24 @@ def download(args):
     target_dir = config['target_dir']
     delete_after_sync = config.get('delete_after_sync', False)
     incremental_mode = config.get('incremental_mode')
+    max_file_count = config.get('max_file_count')
+    removed_file_count = 0
 
     connection_config = {
         'username': config['username'],
     }
+
+    if max_file_count:
+        if not delete_after_sync:
+            raise Exception("Only limit files if delete_after_sync is enabled")
+        try:
+            max_file_count = int(max_file_count)
+        except Exception as exc:
+            raise Exception(f"max_file_count must be an integer not {max_file_count}") from exc
+        sftp_connector = LimitedFilesConnection
+        connection_config["max_file_count"] = max_file_count
+    else:
+        sftp_connector = pysftp.Connection
 
     if config.get('password'):
         connection_config['password'] = config['password']
@@ -116,23 +155,22 @@ def download(args):
         private_key_path = f"{os.getcwd()}/key.pem"
         with open(private_key_path, "w") as f:
             f.write(config.get("private_key"))
-
         connection_config['private_key'] = private_key_path
 
     if port:
         connection_config['port'] = int(port)
 
     if remote_files:
-        with pysftp.Connection(host, **connection_config) as sftp:
+        with sftp_connector(host, **connection_config) as sftp:
             for file in remote_files:
                 target = f"{target_dir}/{file.split('/')[-1]}"
                 logger.info(f"Downloading: data from {file} -> {target}")
                 sftp.get(file, target)
                 if not incremental_mode:
-                    sftp_remove(sftp, delete_after_sync, remote_file=file)
+                    removed_file_count = sftp_remove(sftp, delete_after_sync, remote_file=file, removed_file_count=removed_file_count, max_file_count=max_file_count)
     elif remote_path:
         # Establish connection to SFTP server
-        with pysftp.Connection(host, **connection_config) as sftp:
+        with sftp_connector(host, **connection_config) as sftp:
             logger.info(f"Downloading: data from {remote_path} -> {target_dir}")
             if config.get("recursive_clone", False):
                 with sftp.cd(remote_path):
@@ -145,7 +183,7 @@ def download(args):
                 sftp.get_r(remote_path, target_dir)
 
             if not incremental_mode:
-                sftp_remove(sftp, delete_after_sync, remote_path=remote_path)
+                removed_file_count = sftp_remove(sftp, delete_after_sync, remote_path=remote_path, removed_file_count=removed_file_count, max_file_count=max_file_count)
     else:
         raise Exception("One of the parameters path_prefix or files must be defined.")
 
@@ -166,7 +204,7 @@ def download(args):
                 else:
                     # If it's not already been synced, delete from remote
                     with pysftp.Connection(host, **connection_config) as sftp:
-                        sftp_remove(sftp, delete_after_sync, remote_file=remote_file_path)
+                        removed_file_count = sftp_remove(sftp, delete_after_sync, remote_file=remote_file_path, removed_file_count=removed_file_count, max_file_count=max_file_count)
 
                 state[remote_file_path] = file_hash
 
