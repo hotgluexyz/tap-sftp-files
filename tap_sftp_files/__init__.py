@@ -79,8 +79,6 @@ def rm(sftp_conn, remote_path):
         else:
             sftp_conn.remove(filepath)
 
-    sftp_conn.rmdir(remote_path)
-
 
 def sftp_remove(sftp_conn, delete_after_sync=False, remote_file=None, remote_path=None):
     if not delete_after_sync:
