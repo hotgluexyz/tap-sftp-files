@@ -36,7 +36,7 @@ class LimitedFilesConnection(pysftp.Connection):
     
     @property
     def stop_get_files(self):
-        return self.current_file_count < self.max_file_count
+        return self.current_file_count >= self.max_file_count
 
 
 def parse_args():
@@ -89,7 +89,7 @@ def rm(sftp_conn, remote_path, removed_file_count=0, max_file_count=None):
     files = sftp_conn.listdir(remote_path)
 
     for f in files:
-        if (max_file_count and removed_file_count < max_file_count):
+        if max_file_count and removed_file_count >= max_file_count:
             break
         filepath = os.path.join(remote_path, f)
 
@@ -107,7 +107,7 @@ def sftp_remove(sftp_conn, delete_after_sync=False, remote_file=None, remote_pat
         return
 
     try:
-        if remote_file and (max_file_count and removed_file_count < max_file_count):
+        if remote_file and ((max_file_count and removed_file_count < max_file_count) or not max_file_count):
             logger.info(f"Removing: remote file {remote_file}")
             sftp_conn.remove(remote_file)
             removed_file_count += 1
