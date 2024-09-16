@@ -31,7 +31,8 @@ class LimitedFilesConnection(pysftp.Connection):
     def get(self, remotepath, localpath = None, callback = None, preserve_mtime = False) -> None:
         if self.stop_get_files:
             return
-        self.current_file_count += 1
+        if not self.isdir(remotepath):
+            self.current_file_count += 1
         return super().get(remotepath, localpath=localpath, callback=callback, preserve_mtime=preserve_mtime)
     
     @property
