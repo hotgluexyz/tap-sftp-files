@@ -139,8 +139,6 @@ def download(args):
     }
 
     if max_file_count:
-        if not delete_after_sync:
-            raise Exception("Only limit files if delete_after_sync is enabled")
         try:
             max_file_count = int(max_file_count)
         except Exception as exc:
