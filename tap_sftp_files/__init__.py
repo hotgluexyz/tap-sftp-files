@@ -9,7 +9,7 @@ import pysftp
 from io import StringIO
 import paramiko
 import hashlib
-from stat import S_ISDIR
+import stat
 
 logger = logging.getLogger("tap-sftp-files")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -158,6 +158,34 @@ def download(args):
 
     if port:
         connection_config['port'] = int(port)
+    
+    transport = paramiko.Transport((host, int(port)))
+    transport.use_compression(True)
+    transport.connect(username=config['username'], password=config.get('password', config.get('private_key')), hostkey=None, pkey=config.get('private_key'))
+    sftp = paramiko.SFTPClient.from_transport(transport)
+    try:
+        cwd = sftp.getcwd()
+        logger.info(f"[SFTP Debug] Current working directory: {cwd}")
+    except Exception as e:
+        logger.warning(f"[SFTP Debug] Could not get current working directory: {e}")
+
+    try:
+        logger.info("[SFTP Debug] Listing contents of cwd ('.'):")
+        entries = sftp.listdir_attr(".")
+        for e in entries:
+            kind = "DIR" if stat.S_ISDIR(e.st_mode) else "FILE"
+            logger.info(f"[SFTP Debug] - {kind:4} {e.filename}")
+    except Exception as e:
+        logger.warning(f"[SFTP Debug] Could not list contents of cwd ('.'): {e}")
+
+    try:
+        logger.info("[SFTP Debug] Attempting to list root directory ('/'):")
+        entries = sftp.listdir_attr("/")
+        for e in entries:
+            kind = "DIR" if stat.S_ISDIR(e.st_mode) else "FILE"
+            logger.info(f"[SFTP Debug] - {kind:4} {e.filename}")
+    except Exception as e:
+        logger.warning(f"[SFTP Debug] Could not list root directory ('/'): {e}")
 
     if remote_files:
         with sftp_connector(host, **connection_config) as sftp:
