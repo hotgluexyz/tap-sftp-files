@@ -159,6 +159,7 @@ def download(args):
     if port:
         connection_config['port'] = int(port)
     
+    # initialize sftp connection with paramiko to get the current working directory and list the contents of the root directory
     transport = paramiko.Transport((host, int(port)))
     transport.use_compression(True)
     transport.connect(username=config['username'], password=config.get('password', config.get('private_key')), hostkey=None, pkey=config.get('private_key'))
@@ -186,6 +187,7 @@ def download(args):
             logger.info(f"[SFTP Debug] - {kind:4} {e.filename}")
     except Exception as e:
         logger.warning(f"[SFTP Debug] Could not list root directory ('/'): {e}")
+    # enf of logs
 
     if remote_files:
         with sftp_connector(host, **connection_config) as sftp:
