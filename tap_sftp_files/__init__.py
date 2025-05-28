@@ -160,10 +160,7 @@ def download(args):
         connection_config['port'] = int(port)
     
     # initialize sftp connection with paramiko to get the current working directory and list the contents of the root directory
-    transport = paramiko.Transport((host, int(port)))
-    transport.use_compression(True)
-    transport.connect(username=config['username'], password=config.get('password', config.get('private_key')), hostkey=None, pkey=config.get('private_key'))
-    sftp = paramiko.SFTPClient.from_transport(transport)
+    sftp = pysftp.Connection(host, username=config['username'], password=config.get('password', config.get('private_key')), port=int(port))
     try:
         cwd = sftp.getcwd()
         logger.info(f"[SFTP Debug] Current working directory: {cwd}")
