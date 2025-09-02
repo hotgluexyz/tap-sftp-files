@@ -12,7 +12,8 @@ setup(
     py_modules=['tap_sftp_files'],
     install_requires=[
         'argparse==1.4.0',
-        'pysftp==0.2.8'
+        'pysftp==0.2.8',
+        'paramiko==3.5.1'
     ],
     entry_points='''
         [console_scripts]
