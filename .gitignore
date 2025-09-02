@@ -104,3 +104,4 @@ singer-check-tap-data
 state.json
 
 tmp/
+.venv/
