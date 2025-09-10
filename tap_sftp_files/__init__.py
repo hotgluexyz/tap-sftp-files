@@ -172,7 +172,9 @@ def download(args):
         entries = sftp.listdir_attr(".")
         for e in entries:
             kind = "DIR" if stat.S_ISDIR(e.st_mode) else "FILE"
-            logger.info(f"[SFTP Debug] - {kind:4} {e.filename}")
+            mtime = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(e.st_mtime))
+            logger.info(f"[SFTP Debug] - {kind:4} {e.filename:20} "
+                        f"size={e.st_size} modified={mtime}")
     except Exception as e:
         logger.warning(f"[SFTP Debug] Could not list contents of cwd ('.'): {e}")
 
