@@ -3,13 +3,15 @@ import os
 import json
 import argparse
 import logging
+import time
+import stat
 
 from pathlib import Path
 import pysftp
 from io import StringIO
 import paramiko
 import hashlib
-from stat import S_ISDIR
+import stat
 
 logger = logging.getLogger("tap-sftp-files")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -158,6 +160,37 @@ def download(args):
 
     if port:
         connection_config['port'] = int(port)
+    
+    # Debug SFTP connection logging (if enabled in config)
+    if config.get('sftp_debug_logging', False):
+        # initialize sftp connection with paramiko to get the current working directory and list the contents of the root directory
+        with pysftp.Connection(host, **connection_config) as sftp:
+            try:
+                cwd = sftp.getcwd()
+                logger.info(f"[SFTP Debug] Current working directory: {cwd}")
+            except Exception as e:
+                logger.warning(f"[SFTP Debug] Could not get current working directory: {e}")
+
+            try:
+                logger.info("[SFTP Debug] Listing contents of cwd ('.'):")
+                entries = sftp.listdir_attr(".")
+                for e in entries:
+                    kind = "DIR" if stat.S_ISDIR(e.st_mode) else "FILE"
+                    mtime = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(e.st_mtime))
+                    logger.info(f"[SFTP Debug] - {kind:4} {e.filename:20} "
+                                f"size={e.st_size} modified={mtime}")
+            except Exception as e:
+                logger.warning(f"[SFTP Debug] Could not list contents of cwd ('.'): {e}")
+
+            try:
+                logger.info("[SFTP Debug] Attempting to list root directory ('/'):")
+                entries = sftp.listdir_attr("/")
+                for e in entries:
+                    kind = "DIR" if stat.S_ISDIR(e.st_mode) else "FILE"
+                    logger.info(f"[SFTP Debug] - {kind:4} {e.filename}")
+            except Exception as e:
+                logger.warning(f"[SFTP Debug] Could not list root directory ('/'): {e}")
+        # end of logs
 
     if remote_files:
         with sftp_connector(host, **connection_config) as sftp:
