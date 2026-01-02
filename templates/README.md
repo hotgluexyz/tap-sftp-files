@@ -63,9 +63,8 @@ You must provide either `password` OR `private_key` OR `private_key_file` (but n
   - When `true`, uses `sftp.cd()` to change to `path_prefix` before downloading
   - Only applies when using `path_prefix` mode
 
-- **`exact_directory`** (boolean, optional): If `true`, downloads directory structure exactly
+- **`exact_directory`** (boolean, optional): If `true`, downloads the remote directory contents (non-recursive)
   - Default: `false`
-  - When `true`, uses `sftp.get_d()` method
   - Only applies when using `path_prefix` mode
 
 #### File Management
@@ -187,7 +186,6 @@ tap-sftp-files -c config.json -s state.json
 - When using `incremental_mode`, you **must** provide a state file using the `-s` or `--state` argument
 - The state file stores MD5 hashes of downloaded files to track changes
 - If `delete_after_sync` is enabled, files are deleted from the remote server after successful download
-- When using `private_key`, the key content is temporarily written to `key.pem` in the current working directory
 - `max_file_count` limits both downloads and deletions when `delete_after_sync` is enabled
 - `recursive_clone` and `exact_directory` only apply when using `path_prefix` mode (not with `files`)
 
@@ -196,5 +194,3 @@ tap-sftp-files -c config.json -s state.json
 - **Never commit** your actual `config.json` file with real credentials to version control
 - Store passwords and private keys securely (consider using environment variables or secret management)
 - Use private key authentication when possible instead of passwords
-- The `key.pem` file created from `private_key` is temporary but should still be handled securely
-
