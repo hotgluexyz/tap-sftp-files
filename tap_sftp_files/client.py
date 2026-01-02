@@ -13,7 +13,7 @@ LOGGER = logging.getLogger("tap-sftp-files")
 logging.getLogger("paramiko").setLevel(logging.CRITICAL)
 
 def handle_backoff(details):
-    LOGGER.warn(
+    LOGGER.warning(
         "SSH Connection closed unexpectedly. Waiting {wait} seconds and retrying...".format(**details)
     )
 
@@ -65,6 +65,9 @@ class SFTPConnection():
         jitter=None,
         factor=2)
     def __connect(self):
+        # Avoid reconnecting if we already have an active session.
+        if self.__sftp and self.transport and getattr(self.transport, "is_active", lambda: False)():
+            return
         for i in range(self.retries+1):
             try:
                 LOGGER.info('Creating new connection to SFTP...')
@@ -94,8 +97,10 @@ class SFTPConnection():
     def close(self):
         if self.__sftp:
             self.__sftp.close()
+            self.__sftp = None
         if self.transport:
             self.transport.close()
+            self.transport = None
 
     def __enter__(self):
         """Context manager entry."""

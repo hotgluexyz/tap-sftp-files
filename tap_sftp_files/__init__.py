@@ -29,38 +29,72 @@ def isdir(sftp, path):
         return False
 
 
+def reparent(newparent, oldpath):
+    """Match pysftp.reparent() semantics for local path mapping.
+
+    If oldpath starts with '/', we prefix it with './' so os.path.join doesn't
+    treat it as an absolute path and discard newparent.
+    """
+    if oldpath and oldpath[0] == os.sep:
+        oldpath = "." + oldpath
+    return os.path.join(newparent, oldpath)
+
+
 @contextmanager
 def cd(sftp, path):
     """Context manager to change directory."""
-    original_path = sftp.getcwd()
+    original_path = None
+    try:
+        original_path = sftp.getcwd()
+    except Exception:
+        # Some servers don't support getcwd(); best-effort restore only.
+        original_path = None
     try:
         sftp.chdir(path)
         yield
     finally:
-        sftp.chdir(original_path)
+        if original_path:
+            try:
+                sftp.chdir(original_path)
+            except Exception:
+                logger.debug("Could not restore remote cwd after cd()", exc_info=True)
 
 
-def get_r(sftp, remote_path, local_path, current_file_count=0, max_file_count=None):
-    """Recursively download files and directories."""
+def get_r(sftp, remote_path, local_path, current_file_count=0, max_file_count=None, local_root=None):
+    """Recursively download files and directories.
+
+    Important: when remote_path is absolute (e.g. '/upload'), places files under local_root/upload/... via reparent().
+    """
+    if local_root is None:
+        local_root = local_path
     if max_file_count and current_file_count >= max_file_count:
         return current_file_count
     
     try:
         attrs = sftp.stat(remote_path)
         if stat.S_ISDIR(attrs.st_mode):
-            # Create local directory
-            os.makedirs(local_path, exist_ok=True)
+            # Create local directory (mirror remote_path under local_root)
+            local_dir = reparent(local_root, remote_path)
+            os.makedirs(local_dir, exist_ok=True)
             # List and download contents
             for item in sftp.listdir(remote_path):
                 remote_item = os.path.join(remote_path, item).replace('\\', '/')
-                local_item = os.path.join(local_path, item)
-                current_file_count = get_r(sftp, remote_item, local_item, current_file_count, max_file_count)
+                local_item = reparent(local_root, remote_item)
+                current_file_count = get_r(
+                    sftp,
+                    remote_item,
+                    local_item,
+                    current_file_count,
+                    max_file_count,
+                    local_root=local_root,
+                )
                 if max_file_count and current_file_count >= max_file_count:
                     break
         else:
             # Download file
             if max_file_count and current_file_count >= max_file_count:
                 return current_file_count
+            os.makedirs(os.path.dirname(local_path) or ".", exist_ok=True)
             sftp.get(remote_path, local_path)
             current_file_count += 1
     except Exception as e:
@@ -70,22 +104,26 @@ def get_r(sftp, remote_path, local_path, current_file_count=0, max_file_count=No
 
 
 def get_d(sftp, remote_path, local_path, current_file_count=0, max_file_count=None):
-    """Download directory structure exactly."""
+    """Download directory contents (non-recursive)."""
     if max_file_count and current_file_count >= max_file_count:
         return current_file_count
     
     try:
         attrs = sftp.stat(remote_path)
-        if stat.S_ISDIR(attrs.st_mode):
-            # Create local directory
-            os.makedirs(local_path, exist_ok=True)
-            # List and download contents
-            for item in sftp.listdir(remote_path):
-                remote_item = os.path.join(remote_path, item).replace('\\', '/')
-                local_item = os.path.join(local_path, item)
-                current_file_count = get_d(sftp, remote_item, local_item, current_file_count, max_file_count)
+        if not stat.S_ISDIR(attrs.st_mode):
+            return current_file_count
+
+        os.makedirs(local_path, exist_ok=True)
+        with cd(sftp, remote_path):
+            for sattr in sftp.listdir_attr("."):
                 if max_file_count and current_file_count >= max_file_count:
                     break
+                if stat.S_ISDIR(sattr.st_mode):
+                    continue
+                rname = sattr.filename
+                target = os.path.join(local_path, rname)
+                sftp.get(rname, target)
+                current_file_count += 1
     except Exception as e:
         logger.warning(f"Error downloading {remote_path}: {e}")
     
@@ -240,9 +278,8 @@ def download(args):
                     break
                 target = f"{target_dir}/{file.split('/')[-1]}"
                 logger.info(f"Downloading: data from {file} -> {target}")
-                if not isdir(sftp, file):
-                    sftp.get(file, target)
-                    current_file_count += 1
+                sftp.get(file, target)
+                current_file_count += 1
                 if not incremental_mode:
                     removed_file_count = sftp_remove(sftp, delete_after_sync, remote_file=file, removed_file_count=removed_file_count, max_file_count=max_file_count)
     elif remote_path:
