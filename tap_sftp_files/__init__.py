@@ -5,13 +5,10 @@ import argparse
 import logging
 import time
 import stat
-
-from pathlib import Path
-import pysftp
-from io import StringIO
-import paramiko
 import hashlib
-import stat
+from contextlib import contextmanager
+
+from tap_sftp_files.client import SFTPConnection
 
 logger = logging.getLogger("tap-sftp-files")
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -24,22 +21,96 @@ def load_json(path):
         return json.load(f)
 
 
-class LimitedFilesConnection(pysftp.Connection):
-    def __init__(self, host, username = None, private_key = None, password = None, port = 22, private_key_pass = None, ciphers = None, log = False, max_file_count = None) -> None:
-        self.max_file_count = max_file_count
-        self.current_file_count = 0
-        super().__init__(host, username=username, private_key=private_key, password=password, port=port, private_key_pass=private_key_pass, ciphers=ciphers, log=log)
+def isdir(sftp, path):
+    """Check if a remote path is a directory."""
+    try:
+        return stat.S_ISDIR(sftp.stat(path).st_mode)
+    except:
+        return False
 
-    def get(self, remotepath, localpath = None, callback = None, preserve_mtime = False) -> None:
-        if self.stop_get_files:
-            return
-        if not self.isdir(remotepath):
-            self.current_file_count += 1
-        return super().get(remotepath, localpath=localpath, callback=callback, preserve_mtime=preserve_mtime)
-    
-    @property
-    def stop_get_files(self):
-        return self.current_file_count >= self.max_file_count
+
+def reparent(newparent, oldpath):
+    """If oldpath starts with '/', we prefix it with './' so os.path.join doesn't
+    treat it as an absolute path and discard newparent.
+    """
+    if oldpath and oldpath[0] == os.sep:
+        oldpath = "." + oldpath
+    return os.path.join(newparent, oldpath)
+
+
+@contextmanager
+def cd(sftp, path):
+    """Context manager to change directory."""
+    original_path = sftp.getcwd()
+    try:
+        sftp.chdir(path)
+        yield
+    finally:
+        sftp.chdir(original_path)
+
+
+def get_recursively(sftp, remote_path, local_path, current_file_count=0, max_file_count=None, local_root=None):
+    """Recursively download files and directories.
+
+    When remote_path is absolute (e.g. '/upload'), places files under local_root/upload/... via reparent().
+    """
+    if local_root is None:
+        local_root = local_path
+    if max_file_count and current_file_count >= max_file_count:
+        return current_file_count
+
+    attrs = sftp.stat(remote_path)
+    if stat.S_ISDIR(attrs.st_mode):
+        # Create local directory (mirror remote_path under local_root)
+        local_dir = reparent(local_root, remote_path)
+        os.makedirs(local_dir, exist_ok=True)
+        # List and download contents
+        for item in sftp.listdir(remote_path):
+            remote_item = os.path.join(remote_path, item).replace('\\', '/')
+            local_item = reparent(local_root, remote_item)
+            current_file_count = get_recursively(
+                sftp,
+                remote_item,
+                local_item,
+                current_file_count,
+                max_file_count,
+                local_root=local_root,
+            )
+            if max_file_count and current_file_count >= max_file_count:
+                break
+    else:
+        # Download file
+        if max_file_count and current_file_count >= max_file_count:
+            return current_file_count
+        os.makedirs(os.path.dirname(local_path) or ".", exist_ok=True)
+        sftp.get(remote_path, local_path)
+        current_file_count += 1
+
+    return current_file_count
+
+
+def get_directory(sftp, remote_path, local_path, current_file_count=0, max_file_count=None):
+    """Download directory contents (non-recursive)."""
+    if max_file_count and current_file_count >= max_file_count:
+        return current_file_count
+
+    attrs = sftp.stat(remote_path)
+    if not stat.S_ISDIR(attrs.st_mode):
+        return current_file_count
+
+    os.makedirs(local_path, exist_ok=True)
+    with cd(sftp, remote_path):
+        for sattr in sftp.listdir_attr("."):
+            if max_file_count and current_file_count >= max_file_count:
+                break
+            if stat.S_ISDIR(sattr.st_mode):
+                continue
+            rname = sattr.filename
+            target = os.path.join(local_path, rname)
+            sftp.get(rname, target)
+            current_file_count += 1
+
+    return current_file_count
 
 
 def parse_args():
@@ -96,7 +167,7 @@ def rm(sftp_conn, remote_path, removed_file_count=0, max_file_count=None):
             break
         filepath = os.path.join(remote_path, f)
 
-        if sftp_conn.isdir(filepath):
+        if isdir(sftp_conn, filepath):
             removed_file_count = rm(sftp_conn, filepath, removed_file_count, max_file_count)
         else:
             sftp_conn.remove(filepath)
@@ -107,7 +178,7 @@ def rm(sftp_conn, remote_path, removed_file_count=0, max_file_count=None):
 
 def sftp_remove(sftp_conn, delete_after_sync=False, remote_file=None, remote_path=None, removed_file_count=0, max_file_count=None):
     if not delete_after_sync:
-        return
+        return removed_file_count
 
     try:
         if remote_file and ((max_file_count and removed_file_count < max_file_count) or not max_file_count):
@@ -126,8 +197,6 @@ def sftp_remove(sftp_conn, delete_after_sync=False, remote_file=None, remote_pat
 def download(args):
     logger.debug(f"Downloading data...")
     config = args.config
-    host = config['host']
-    port = config.get('port', "")
     remote_path = config.get('path_prefix')
     remote_files = config.get('files')
     target_dir = config['target_dir']
@@ -135,9 +204,15 @@ def download(args):
     incremental_mode = config.get('incremental_mode')
     max_file_count = config.get('max_file_count')
     removed_file_count = 0
+    current_file_count = 0
 
     connection_config = {
+        'host': config['host'],
         'username': config['username'],
+        'port': config.get('port'),
+        'password': config.get('password'),
+        'private_key_file': config.get('private_key_file'),
+        'private_key': config.get('private_key'),
     }
 
     if max_file_count:
@@ -145,26 +220,12 @@ def download(args):
             max_file_count = int(max_file_count)
         except Exception as exc:
             raise Exception(f"max_file_count must be an integer not {max_file_count}") from exc
-        sftp_connector = LimitedFilesConnection
-        connection_config["max_file_count"] = max_file_count
-    else:
-        sftp_connector = pysftp.Connection
-
-    if config.get('password'):
-        connection_config['password'] = config['password']
-    elif config.get("private_key"):
-        private_key_path = f"{os.getcwd()}/key.pem"
-        with open(private_key_path, "w") as f:
-            f.write(config.get("private_key"))
-        connection_config['private_key'] = private_key_path
-
-    if port:
-        connection_config['port'] = int(port)
     
     # Debug SFTP connection logging (if enabled in config)
     if config.get('sftp_debug_logging', False):
         # initialize sftp connection with paramiko to get the current working directory and list the contents of the root directory
-        with pysftp.Connection(host, **connection_config) as sftp:
+        with SFTPConnection(**connection_config) as sftp_conn:
+            sftp = sftp_conn.sftp
             try:
                 cwd = sftp.getcwd()
                 logger.info(f"[SFTP Debug] Current working directory: {cwd}")
@@ -193,26 +254,31 @@ def download(args):
         # end of logs
 
     if remote_files:
-        with sftp_connector(host, **connection_config) as sftp:
+        with SFTPConnection(**connection_config) as sftp_conn:
+            sftp = sftp_conn.sftp
             for file in remote_files:
+                if max_file_count and current_file_count >= max_file_count:
+                    break
                 target = f"{target_dir}/{file.split('/')[-1]}"
                 logger.info(f"Downloading: data from {file} -> {target}")
                 sftp.get(file, target)
+                current_file_count += 1
                 if not incremental_mode:
                     removed_file_count = sftp_remove(sftp, delete_after_sync, remote_file=file, removed_file_count=removed_file_count, max_file_count=max_file_count)
     elif remote_path:
         # Establish connection to SFTP server
-        with sftp_connector(host, **connection_config) as sftp:
+        with SFTPConnection(**connection_config) as sftp_conn:
+            sftp = sftp_conn.sftp
             logger.info(f"Downloading: data from {remote_path} -> {target_dir}")
             if config.get("recursive_clone", False):
-                with sftp.cd(remote_path):
+                with cd(sftp, remote_path):
                     # Copy all files in remote_path to target_dir
-                    sftp.get_r(".", target_dir)
+                    current_file_count = get_recursively(sftp, ".", target_dir, current_file_count, max_file_count)
             elif config.get("exact_directory", False):
-                sftp.get_d(remote_path, target_dir)
+                current_file_count = get_directory(sftp, remote_path, target_dir, current_file_count, max_file_count)
             else:
                 # Copy all files in remote_path to target_dir
-                sftp.get_r(remote_path, target_dir)
+                current_file_count = get_recursively(sftp, remote_path, target_dir, current_file_count, max_file_count)
 
             if not incremental_mode:
                 removed_file_count = sftp_remove(sftp, delete_after_sync, remote_path=remote_path, removed_file_count=removed_file_count, max_file_count=max_file_count)
@@ -235,7 +301,8 @@ def download(args):
                     os.remove(local_file_path)
                 else:
                     # If it's not already been synced, delete from remote
-                    with pysftp.Connection(host, **connection_config) as sftp:
+                    with SFTPConnection(**connection_config) as sftp_conn:
+                        sftp = sftp_conn.sftp
                         removed_file_count = sftp_remove(sftp, delete_after_sync, remote_file=remote_file_path, removed_file_count=removed_file_count, max_file_count=max_file_count)
 
                 state[remote_file_path] = file_hash
