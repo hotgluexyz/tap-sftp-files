@@ -4,15 +4,14 @@ from setuptools import setup
 
 setup(
     name='tap-sftp-files',
-    version='0.0.2',
+    version='0.0.3',
     description='hotglue tap for importing files from SFTP',
     author='hotglue',
     url='https://hotglue.xyz',
     classifiers=['Programming Language :: Python :: 3 :: Only'],
     py_modules=['tap_sftp_files'],
     install_requires=[
-        'argparse==1.4.0',
-        'pysftp==0.2.8',
+        'backoff==2.2.1',
         'paramiko==3.5.1'
     ],
     entry_points='''
