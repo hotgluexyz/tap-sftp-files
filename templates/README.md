@@ -58,9 +58,10 @@ You must provide either `password` OR `private_key` OR `private_key_file` (but n
 
 #### Download Behavior
 
-- **`recursive_clone`** (boolean, optional): If `true`, changes to the remote directory before downloading
+- **`recursive_clone`** (boolean, optional): Controls how the remote folder is mapped into `target_dir` when downloading recursively
   - Default: `false`
-  - When `true`, uses `sftp.cd()` to change to `path_prefix` before downloading
+  - When `false`: includes the `path_prefix` directory name under `target_dir` (e.g., `target_dir/path_prefix/...`)
+  - When `true`: downloads the contents of `path_prefix` directly into `target_dir` (e.g., `target_dir/...`)
   - Only applies when using `path_prefix` mode
 
 - **`exact_directory`** (boolean, optional): If `true`, downloads the remote directory contents (non-recursive)
