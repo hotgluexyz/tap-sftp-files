@@ -30,7 +30,7 @@ class SFTPConnection():
         self.__sftp = None
         self._setup_key(private_key_file, private_key, password)
 
-    def _setup_key(self, private_key_file: str | None = None, private_key: str | None = None, passphrase: str | None = None) -> None:
+    def _setup_key(self, private_key_file=None, private_key=None, passphrase=None) -> None:
         if not private_key_file and not private_key:
             return  # No key provided, skip setup
         
